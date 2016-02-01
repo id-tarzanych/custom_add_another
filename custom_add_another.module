@@ -1,20 +1,27 @@
 <?php
-/**
- * @file
- *   Allows the 'Add another item' button text to be customised.
- */
 
 /**
- * Implements hook_field_info_alter().
+ * @file
+ * Allows the 'Add another item' button text to be customised.
  */
-function custom_add_another_field_info_alter(&$info) {
-  // Add the 'custom_add_another' instance setting to all field types.
-  foreach ($info as $field_type => &$field_type_info) {
-    $field_type_info += array('instance_settings' => array());
-    $field_type_info['instance_settings'] += array(
-      'custom_add_another' => '',
-      'custom_remove' => '',
-    );
+
+use Drupal\Core\Render\Element;
+use Drupal\Core\Field\FieldStorageDefinitionInterface;
+use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\Entity\EntityTypeInterface;
+use Drupal\field\FieldConfigInterface;
+
+/**
+ * Implements hook_entity_bundle_field_info_alter().
+ */
+function custom_add_another_entity_bundle_field_info_alter(&$fields, EntityTypeInterface $entity_type, $bundle) {
+  foreach ($fields as $field_type => &$field) {
+    if ($field instanceof FieldConfigInterface && empty($field->getThirdPartySettings('custom_add_another'))) {
+      $field
+        ->setThirdPartySetting('custom_add_another', 'custom_add_another', '')
+        ->setThirdPartySetting('custom_add_another', 'custom_remove', '')
+        ->save();
+    }
   }
 }
 
@@ -24,65 +31,92 @@ function custom_add_another_field_info_alter(&$info) {
  * Add a textbox for the 'custom_add_another' instance settings on the 'Edit
  * field instance' form.
  */
-function custom_add_another_form_field_ui_field_edit_form_alter(&$form, &$form_state, $form_id) {
-  $instance = $form['#instance'];
+function custom_add_another_form_field_storage_config_edit_form_alter(&$form, FormStateInterface $form_state, $form_id) {
+  /** @var \Drupal\field\FieldConfigInterface $field */
+  $field = $form_state->getStorage()['field_config'];
 
-  if (empty($form['#field']['locked'])) {
+  /** @var \Drupal\field\FieldStorageConfigInterface $field_storage */
+  $field_storage = $form_state->getFormObject()->getEntity();
 
-    $form['instance']['custom_add_another'] = array(
+  if (!$field_storage->isLocked()) {
+    $form['custom_add_another'] = [
       '#type' => 'textfield',
       '#title' => t('Custom add another item button'),
       '#description' => t("If the number of items in this field is set to 'Unlimited' then you might get a button that allows you to 'Add another item'. You may customise the text for that button here, an empty value will just use the default value for the button text."),
-      // Add a hint for the empty value if hint module is around.
-      '#hint' => t('Add another item'),
-      '#default_value' => isset($instance['custom_add_another']) ? $instance['custom_add_another'] : '',
+      '#default_value' => $field->getThirdPartySetting('custom_add_another', 'custom_add_another'),
 
       // Hidden when the 'Number of values' is not unlimited.
-      '#states' => array(
-        'visible' => array(
-          ':input[name="field[cardinality]"]' => array('value' => (string)FIELD_CARDINALITY_UNLIMITED),
-        ),
-      ),
-    );
+      '#states' => [
+        'visible' => [
+          ':input[name="cardinality"]' => [
+            'value' => FieldStorageDefinitionInterface::CARDINALITY_UNLIMITED,
+          ],
+        ],
+      ],
+    ];
 
-    $form['instance']['custom_remove'] = array(
+    $form['custom_remove'] = [
       '#type' => 'textfield',
       '#title' => t('Custom remove button'),
       '#description' => t("If the number of items in this field is set to 'Unlimited' then you might get a button that allows you to 'Remove'. You may customise the text for that button here, an empty value will just use the default value for the button text."),
       // Add a hint for the empty value if hint module is around.
       '#hint' => t('Remove this item'),
-      '#default_value' => isset($instance['custom_remove']) ? $instance['custom_remove'] : '',
+      '#default_value' => $field->getThirdPartySetting('custom_add_another', 'custom_remove'),
 
       // Hidden when the 'Number of values' is not unlimited.
-      '#states' => array(
-        'visible' => array(
-          ':input[name="field[cardinality]"]' => array('value' => (string)FIELD_CARDINALITY_UNLIMITED),
-        ),
-      ),
-    );
+      '#states' => [
+        'visible' => [
+          ':input[name="cardinality"]' => [
+            'value' => FieldStorageDefinitionInterface::CARDINALITY_UNLIMITED,
+          ],
+        ],
+      ],
+    ];
 
+    array_unshift($form['actions']['submit']['#submit'], 'custom_add_another_third_party_settings_submit');
   }
+}
+
+/**
+ * Submit callback that saves custom labels to field Third Party Settings.
+ */
+function custom_add_another_third_party_settings_submit($form, FormStateInterface $form_state) {
+  /** @var \Drupal\field\FieldConfigInterface $field */
+  $field = $form_state->getStorage()['field_config'];
+
+  $field
+    ->setThirdPartySetting('custom_add_another', 'custom_add_another', $form_state->getValue('custom_add_another'))
+    ->setThirdPartySetting('custom_add_another', 'custom_remove', $form_state->getValue('custom_remove'))
+    ->save();
 }
 
 /**
  * Implements hook_field_widget_form_alter().
  */
-function custom_add_another_field_widget_form_alter(&$element, &$form_state, $context) {
-  $instance = module_exists('i18n_custom_add_another') ? i18n_string_object_translate('field_instance', $context['instance']) : $context['instance'];
+function custom_add_another_field_widget_form_alter(&$element, FormStateInterface $form_state, $context) {
+  $field = $context['items']->getFieldDefinition();
 
-  $field = $context['field'];
-  if (($field['cardinality'] == FIELD_CARDINALITY_UNLIMITED)) {
-    if  (!empty($instance['custom_add_another'])) {
-      // Pop the add another value to be used on the add more button into the
-      // widget here for use later by
-      // custom_add_another_preprocess_field_multiple_value_form().
-      $element['#custom_add_another_value'] = $instance['custom_add_another'];
-    }
-    if  (!empty($instance['custom_remove'])) {
-      // Pop the add another value to be used on the add more button into the
-      // widget here for use later by
-      // custom_add_another_preprocess_field_multiple_value_form().
-      $element['#custom_remove'] = $instance['custom_remove'];
+  if ($field instanceof FieldConfigInterface) {
+    /** @var \Drupal\field\FieldStorageConfigInterface $field_storage */
+    $field_storage = $field->getFieldStorageDefinition();
+
+    if ($field_storage->getCardinality() == FieldStorageDefinitionInterface::CARDINALITY_UNLIMITED) {
+      if ($add_another_text = $field->getThirdPartySetting('custom_add_another', 'custom_add_another', '')) {
+        // Pop the add another value to be used on the add more button into the
+        // widget here for use later by
+        // custom_add_another_preprocess_field_multiple_value_form().
+        $element['#custom_add_another_value'] = $add_another_text;
+      }
+      if ($remove_text = $field->getThirdPartySetting('custom_add_another', 'custom_remove', '')) {
+        // Pop the add another value to be used on the add more button into the
+        // widget here for use later by
+        // custom_add_another_preprocess_field_multiple_value_form().
+        $element['#custom_remove'] = $remove_text;
+      }
+
+      if (!empty($element['#type']) && $element['#type'] == 'managed_file') {
+        $element['#process'][] = 'custom_add_another_process_file_buttons_labels';
+      }
     }
   }
 }
@@ -95,14 +129,34 @@ function custom_add_another_field_widget_form_alter(&$element, &$form_state, $co
  * to use that.
  */
 function custom_add_another_preprocess_field_multiple_value_form(&$variables) {
-  foreach (element_children($variables['element']) as $child) {
-    if (isset($variables['element'][$child]['#custom_add_another_value']) || isset($variables['element'][$child]['#custom_remove'])) {
-      if (isset($variables['element'][$child]['#custom_add_another_value']) && isset($variables['element']['add_more']['#value']) && $variables['element']['add_more']['#value'] != t($variables['element'][$child]['#custom_add_another_value'])) {
-        $variables['element']['add_more']['#value'] = t($variables['element'][$child]['#custom_add_another_value']);
+  foreach (Element::children($variables['element']) as $child) {
+    $child_element = &$variables['element'][$child];
+    if (isset($child_element['#custom_add_another_value']) || isset($child_element['#custom_remove'])) {
+      if (isset($child_element['#custom_add_another_value']) && isset($variables['element']['add_more']['#value']) && $variables['element']['add_more']['#value'] != t($child_element['#custom_add_another_value'])) {
+        $variables['element']['add_more']['#value'] = t($child_element['#custom_add_another_value']);
       }
-      if (isset($variables['element'][$child]['#custom_remove']) && isset($variables['element'][$child]['remove_button']['#value'])) {
-        $variables['element'][$child]['remove_button']['#value'] = t($variables['element'][$child]['#custom_remove']);
+      if (isset($child_element['#custom_add_another_value']) && isset($variables['button']['#value']) && $variables['button']['#value'] != t($child_element['#custom_add_another_value'])) {
+        $variables['button']['#value'] = t($child_element['#custom_add_another_value']);
+      }
+      if (isset($child_element['#custom_remove']) && isset($child_element['remove_button']['#value'])) {
+        $child_element['remove_button']['#value'] = t($child_element['#custom_remove']);
       }
     }
   }
+}
+
+/**
+ * Process element callback for multiple Managed file widgets.
+ */
+function custom_add_another_process_file_buttons_labels($element, FormStateInterface $form_state, $form) {
+  if (isset($element['#custom_add_another_value']) || isset($element['#custom_remove'])) {
+    if (isset($element['#custom_add_another_value']) && isset($element['upload_button']['#value']) && $element['upload_button']['#value'] != t($element['#custom_add_another_value'])) {
+      $element['upload_button']['#value'] = t($element['#custom_add_another_value']);
+    }
+    if (isset($element['#custom_remove']) && isset($element['remove_button']['#value'])) {
+      $element['remove_button']['#value'] = t($element['#custom_remove']);
+    }
+  }
+
+  return $element;
 }
